@@ -1,6 +1,4 @@
 
-import { createClient } from '@supabase/supabase-js';
-
 // Encryption utilities for secure time capsule data
 export class CapsuleEncryption {
   private static async deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {

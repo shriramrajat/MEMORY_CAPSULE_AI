@@ -5,12 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Clock, Heart, Sparkles } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 
-interface AuthViewProps {
-  onAuthenticated: (authenticated: boolean) => void;
-}
-
-export const AuthView = ({ onAuthenticated }: AuthViewProps) => {
+export const AuthView = () => {
+  const { signIn, signUp } = useAuth();
+  const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -20,24 +20,44 @@ export const AuthView = ({ onAuthenticated }: AuthViewProps) => {
     e.preventDefault();
     setIsLoading(true);
     
-    // Simulate authentication - replace with actual Supabase auth
-    setTimeout(() => {
-      console.log("Login attempted with:", { email, password });
+    try {
+      await signIn(email, password);
+      toast({
+        title: "Welcome back!",
+        description: "Successfully signed in to your secure capsule vault.",
+      });
+    } catch (error) {
+      console.error("Login error:", error);
+      toast({
+        title: "Sign in failed",
+        description: "Please check your credentials and try again.",
+        variant: "destructive",
+      });
+    } finally {
       setIsLoading(false);
-      onAuthenticated(true);
-    }, 1500);
+    }
   };
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     
-    // Simulate authentication - replace with actual Supabase auth
-    setTimeout(() => {
-      console.log("Signup attempted with:", { name, email, password });
+    try {
+      await signUp(email, password, name);
+      toast({
+        title: "Account created!",
+        description: "Welcome to your secure digital time capsule.",
+      });
+    } catch (error) {
+      console.error("Signup error:", error);
+      toast({
+        title: "Account creation failed",
+        description: "Please try again with different details.",
+        variant: "destructive",
+      });
+    } finally {
       setIsLoading(false);
-      onAuthenticated(true);
-    }, 1500);
+    }
   };
 
   return (
