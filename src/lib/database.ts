@@ -1,11 +1,19 @@
 
-import { createClient } from '@supabase/supabase-js';
+import { 
+  collection, 
+  addDoc, 
+  query, 
+  where, 
+  getDocs, 
+  getDoc, 
+  doc, 
+  updateDoc,
+  Timestamp,
+  orderBy
+} from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '@/integrations/firebase/config';
 import { CapsuleEncryption, FileEncryption } from './encryption';
-
-const supabase = createClient(
-  process.env.REACT_APP_SUPABASE_URL!,
-  process.env.REACT_APP_SUPABASE_ANON_KEY!
-);
 
 export interface EncryptedCapsule {
   id: string;
@@ -50,30 +58,25 @@ export class SecureCapsuleDB {
     const encryptedTitle = await CapsuleEncryption.encryptData(title, userKey);
     const encryptedContent = await CapsuleEncryption.encryptData(content, userKey);
 
-    // Insert encrypted capsule
-    const { data: capsule, error } = await supabase
-      .from('capsules')
-      .insert({
-        user_id: userId,
-        title_encrypted: encryptedTitle.encryptedData,
-        title_iv: encryptedTitle.iv,
-        content_encrypted: encryptedContent.encryptedData,
-        content_iv: encryptedContent.iv,
-        unlock_date: unlockDate.toISOString(),
-        capsule_type: type,
-        is_unlocked: false,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
+    // Insert encrypted capsule into Firestore
+    const capsuleRef = await addDoc(collection(db, 'capsules'), {
+      user_id: userId,
+      title_encrypted: encryptedTitle.encryptedData,
+      title_iv: encryptedTitle.iv,
+      content_encrypted: encryptedContent.encryptedData,
+      content_iv: encryptedContent.iv,
+      unlock_date: Timestamp.fromDate(unlockDate),
+      capsule_type: type,
+      is_unlocked: false,
+      created_at: Timestamp.now(),
+    });
 
     // Handle file uploads if any
     if (files && files.length > 0) {
-      await this.uploadCapsuleFiles(capsule.id, files, userKey, userId);
+      await this.uploadCapsuleFiles(capsuleRef.id, files, userKey, userId);
     }
 
-    return capsule.id;
+    return capsuleRef.id;
   }
 
   static async uploadCapsuleFiles(
@@ -86,15 +89,12 @@ export class SecureCapsuleDB {
       // Encrypt file
       const encryptedFile = await FileEncryption.encryptFile(file, userKey);
       
-      // Upload to Supabase Storage
+      // Upload to Firebase Storage
       const fileName = `${userId}/${capsuleId}/${crypto.randomUUID()}`;
-      const { error: uploadError } = await supabase.storage
-        .from('capsule-files')
-        .upload(fileName, encryptedFile.encryptedFile);
+      const storageRef = ref(storage, `capsule-files/${fileName}`);
+      await uploadBytes(storageRef, encryptedFile.encryptedFile);
 
-      if (uploadError) throw uploadError;
-
-      // Store file metadata
+      // Store file metadata in Firestore
       const encryptedName = await CapsuleEncryption.encryptData(
         encryptedFile.originalName,
         userKey
@@ -104,20 +104,17 @@ export class SecureCapsuleDB {
         userKey
       );
 
-      const { error: metadataError } = await supabase
-        .from('capsule_files')
-        .insert({
-          capsule_id: capsuleId,
-          user_id: userId,
-          file_path: fileName,
-          name_encrypted: encryptedName.encryptedData,
-          name_iv: encryptedName.iv,
-          type_encrypted: encryptedType.encryptedData,
-          type_iv: encryptedType.iv,
-          file_iv: encryptedFile.iv,
-        });
-
-      if (metadataError) throw metadataError;
+      await addDoc(collection(db, 'capsule_files'), {
+        capsule_id: capsuleId,
+        user_id: userId,
+        file_path: fileName,
+        name_encrypted: encryptedName.encryptedData,
+        name_iv: encryptedName.iv,
+        type_encrypted: encryptedType.encryptedData,
+        type_iv: encryptedType.iv,
+        file_iv: encryptedFile.iv,
+        created_at: Timestamp.now(),
+      });
     }
   }
 
@@ -125,19 +122,21 @@ export class SecureCapsuleDB {
     userId: string,
     userKey: CryptoKey
   ): Promise<DecryptedCapsule[]> {
-    // Fetch user's encrypted capsules
-    const { data: capsules, error } = await supabase
-      .from('capsules')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
+    // Fetch user's encrypted capsules from Firestore
+    const capsulesQuery = query(
+      collection(db, 'capsules'),
+      where('user_id', '==', userId),
+      orderBy('created_at', 'desc')
+    );
+    
+    const querySnapshot = await getDocs(capsulesQuery);
 
     // Decrypt and return capsules
     const decryptedCapsules: DecryptedCapsule[] = [];
     
-    for (const capsule of capsules) {
+    for (const docSnapshot of querySnapshot.docs) {
+      const capsule = { id: docSnapshot.id, ...docSnapshot.data() };
+      
       try {
         const title = await CapsuleEncryption.decryptData(
           capsule.title_encrypted,
@@ -151,23 +150,23 @@ export class SecureCapsuleDB {
         );
 
         // Check if capsule should be unlocked
-        const unlockDate = new Date(capsule.unlock_date);
+        const unlockDate = (capsule.unlock_date as Timestamp).toDate();
         const isUnlocked = capsule.is_unlocked || new Date() >= unlockDate;
 
         // Update unlock status if needed
         if (!capsule.is_unlocked && isUnlocked) {
-          await supabase
-            .from('capsules')
-            .update({ is_unlocked: true })
-            .eq('id', capsule.id);
+          const capsuleRef = doc(db, 'capsules', capsule.id);
+          await updateDoc(capsuleRef, { is_unlocked: true });
         }
+
+        const createdAt = (capsule.created_at as Timestamp).toDate();
 
         decryptedCapsules.push({
           id: capsule.id,
           title,
           content: isUnlocked ? content : '[Locked until unlock date]',
           unlockDate,
-          createdAt: new Date(capsule.created_at),
+          createdAt,
           isUnlocked,
           type: capsule.capsule_type,
         });
@@ -185,15 +184,16 @@ export class SecureCapsuleDB {
     userId: string,
     userKey: CryptoKey
   ): Promise<DecryptedCapsule | null> {
-    // Fetch specific capsule (with RLS ensuring user can only access their own)
-    const { data: capsule, error } = await supabase
-      .from('capsules')
-      .select('*')
-      .eq('id', capsuleId)
-      .eq('user_id', userId)
-      .single();
+    // Fetch specific capsule from Firestore
+    const capsuleRef = doc(db, 'capsules', capsuleId);
+    const capsuleSnap = await getDoc(capsuleRef);
 
-    if (error || !capsule) return null;
+    if (!capsuleSnap.exists()) return null;
+
+    const capsule = { id: capsuleSnap.id, ...capsuleSnap.data() };
+
+    // Verify user owns this capsule
+    if (capsule.user_id !== userId) return null;
 
     try {
       const title = await CapsuleEncryption.decryptData(
@@ -207,18 +207,20 @@ export class SecureCapsuleDB {
         userKey
       );
 
-      const unlockDate = new Date(capsule.unlock_date);
+      const unlockDate = (capsule.unlock_date as Timestamp).toDate();
       const isUnlocked = capsule.is_unlocked || new Date() >= unlockDate;
 
       // Get associated files
       const files = await this.getCapsuleFiles(capsuleId, userId, userKey);
+
+      const createdAt = (capsule.created_at as Timestamp).toDate();
 
       return {
         id: capsule.id,
         title,
         content: isUnlocked ? content : '[Locked until unlock date]',
         unlockDate,
-        createdAt: new Date(capsule.created_at),
+        createdAt,
         isUnlocked,
         type: capsule.capsule_type,
         files,
@@ -234,16 +236,20 @@ export class SecureCapsuleDB {
     userId: string,
     userKey: CryptoKey
   ): Promise<Array<{ id: string; name: string; type: string; url: string }>> {
-    const { data: fileMetadata, error } = await supabase
-      .from('capsule_files')
-      .select('*')
-      .eq('capsule_id', capsuleId)
-      .eq('user_id', userId);
+    const filesQuery = query(
+      collection(db, 'capsule_files'),
+      where('capsule_id', '==', capsuleId),
+      where('user_id', '==', userId)
+    );
 
-    if (error || !fileMetadata) return [];
+    const querySnapshot = await getDocs(filesQuery);
+
+    if (querySnapshot.empty) return [];
 
     const files = [];
-    for (const file of fileMetadata) {
+    for (const docSnapshot of querySnapshot.docs) {
+      const file = { id: docSnapshot.id, ...docSnapshot.data() };
+      
       try {
         const name = await CapsuleEncryption.decryptData(
           file.name_encrypted,
@@ -256,19 +262,16 @@ export class SecureCapsuleDB {
           userKey
         );
 
-        // Create secure download URL
-        const { data: urlData } = await supabase.storage
-          .from('capsule-files')
-          .createSignedUrl(file.file_path, 3600); // 1 hour expiry
+        // Create download URL from Firebase Storage
+        const storageRef = ref(storage, `capsule-files/${file.file_path}`);
+        const downloadUrl = await getDownloadURL(storageRef);
 
-        if (urlData?.signedUrl) {
-          files.push({
-            id: file.id,
-            name,
-            type,
-            url: urlData.signedUrl,
-          });
-        }
+        files.push({
+          id: file.id,
+          name,
+          type,
+          url: downloadUrl,
+        });
       } catch (decryptionError) {
         console.error('Failed to decrypt file metadata:', file.id, decryptionError);
       }

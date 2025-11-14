@@ -1,6 +1,14 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  User as FirebaseUser,
+  updateProfile
+} from 'firebase/auth';
+import { auth } from '@/integrations/firebase/config';
 import { CapsuleEncryption } from '@/lib/encryption';
 
 interface User {
@@ -32,57 +40,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [userKey, setUserKey] = useState<CryptoKey | null>(null);
   const [loading, setLoading] = useState(true);
+  const [storedPassword, setStoredPassword] = useState<string | null>(null);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
+    // Listen for auth state changes
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      if (firebaseUser) {
         setUser({
-          id: session.user.id,
-          email: session.user.email!,
-          created_at: session.user.created_at,
+          id: firebaseUser.uid,
+          email: firebaseUser.email!,
+          created_at: firebaseUser.metadata.creationTime || new Date().toISOString(),
         });
-      }
-      setLoading(false);
-    });
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        setUser({
-          id: session.user.id,
-          email: session.user.email!,
-          created_at: session.user.created_at,
-        });
+        // If we have a stored password, generate the encryption key
+        if (storedPassword) {
+          const encryptionKey = await CapsuleEncryption.getUserEncryptionKey(
+            firebaseUser.uid,
+            storedPassword
+          );
+          setUserKey(encryptionKey);
+        }
       } else {
         setUser(null);
         setUserKey(null);
+        setStoredPassword(null);
       }
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
-  }, []);
+    return () => unsubscribe();
+  }, [storedPassword]);
 
   const signUp = async (email: string, password: string, name: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name,
-        },
-      },
-    });
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    
+    // Update user profile with display name
+    if (userCredential.user) {
+      await updateProfile(userCredential.user, {
+        displayName: name,
+      });
 
-    if (error) throw error;
-
-    // Generate encryption key for new user
-    if (data.user) {
+      // Store password temporarily to generate encryption key
+      setStoredPassword(password);
+      
+      // Generate encryption key for new user
       const encryptionKey = await CapsuleEncryption.getUserEncryptionKey(
-        data.user.id,
+        userCredential.user.uid,
         password
       );
       setUserKey(encryptionKey);
@@ -90,17 +93,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signIn = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
-    if (error) throw error;
+    // Store password temporarily to generate encryption key
+    setStoredPassword(password);
 
     // Generate encryption key for existing user
-    if (data.user) {
+    if (userCredential.user) {
       const encryptionKey = await CapsuleEncryption.getUserEncryptionKey(
-        data.user.id,
+        userCredential.user.uid,
         password
       );
       setUserKey(encryptionKey);
@@ -108,9 +109,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    await firebaseSignOut(auth);
     setUserKey(null);
+    setStoredPassword(null);
   };
 
   const value = {
