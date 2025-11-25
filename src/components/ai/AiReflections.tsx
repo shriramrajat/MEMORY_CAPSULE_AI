@@ -3,98 +3,87 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Sparkles, TrendingUp, Heart, Brain, Calendar } from "lucide-react";
-import { format, subMonths } from "date-fns";
-
-interface AiReflection {
-  id: string;
-  content: string;
-  type: 'periodic' | 'milestone' | 'trend';
-  createdAt: Date;
-  analyzedPeriod: {
-    start: Date;
-    end: Date;
-  };
-  sentimentTrend: 'improving' | 'stable' | 'declining';
-  keyThemes: string[];
-}
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ArrowLeft, Sparkles, TrendingUp, Heart, Brain, Calendar, Loader2, AlertCircle, Plus } from "lucide-react";
+import { format } from "date-fns";
+import { useAuth } from "@/contexts/AuthContext";
+import { SecureCapsuleDB, DecryptedCapsule } from "@/lib/database";
+import { aiService, AIReflection } from "@/lib/ai-service";
 
 interface AiReflectionsProps {
   onBack: () => void;
 }
 
 export const AiReflections = ({ onBack }: AiReflectionsProps) => {
-  const [reflections, setReflections] = useState<AiReflection[]>([]);
+  const [reflection, setReflection] = useState<AIReflection | null>(null);
+  const [capsules, setCapsules] = useState<DecryptedCapsule[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { user, userKey } = useAuth();
 
   useEffect(() => {
-    // Mock data - replace with actual API calls
-    setTimeout(() => {
-      const mockReflections: AiReflection[] = [
-        {
-          id: "1",
-          content: `Looking at your entries from the past three months, I notice a beautiful pattern of growth and self-compassion. 
+    const loadCapsulesAndReflection = async () => {
+      if (!user || !userKey) {
+        setIsLoading(false);
+        return;
+      }
 
-Your writing has evolved from uncertainty about your career path to a more confident voice discussing your achievements and goals. The themes of "learning" and "growth" appear 12 times across your capsules, suggesting a deep commitment to personal development.
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        // Fetch capsules from Firebase
+        const fetchedCapsules = await SecureCapsuleDB.getUserCapsules(user.id, userKey);
+        setCapsules(fetchedCapsules);
 
-There's a notable shift in how you talk about challenges - earlier entries focused on fears and doubts, while recent ones frame obstacles as opportunities. This suggests you're developing stronger resilience and a more positive mindset.
-
-Your relationships seem to be a consistent source of joy, with Emma and your family mentioned frequently in contexts of gratitude and love. The care you show for others reflects the kindness you're learning to show yourself.
-
-Keep nurturing this gentle confidence you're building. Your past self would be proud of how far you've come.`,
-          type: 'periodic',
-          createdAt: new Date(),
-          analyzedPeriod: {
-            start: subMonths(new Date(), 3),
-            end: new Date()
-          },
-          sentimentTrend: 'improving',
-          keyThemes: ['growth', 'relationships', 'confidence', 'gratitude', 'learning']
-        },
-        {
-          id: "2", 
-          content: `Your recent graduation capsule reveals so much about your character - the vulnerability you showed in expressing both fear and excitement demonstrates emotional maturity.
-
-The way you acknowledged your worries while still choosing hope shows remarkable self-awareness. Your concern for "making new friends" and "being good enough" are deeply human and relatable fears that many share during major life transitions.
-
-What stands out is your commitment to authenticity - "building a life that feels authentically mine" appears to be a core value driving your decisions. This self-knowledge will serve you well.
-
-The love and encouragement you showed your future self in that letter reflects the same kindness you deserve to show yourself today.`,
-          type: 'milestone',
-          createdAt: subMonths(new Date(), 1),
-          analyzedPeriod: {
-            start: new Date("2023-06-15"),
-            end: new Date("2023-06-15")
-          },
-          sentimentTrend: 'stable',
-          keyThemes: ['transition', 'authenticity', 'vulnerability', 'hope', 'self-compassion']
+        // Generate initial reflection if we have capsules
+        if (fetchedCapsules.length > 0) {
+          const aiReflection = await aiService.generateReflection(fetchedCapsules);
+          setReflection(aiReflection);
         }
-      ];
-      
-      setReflections(mockReflections);
-      setIsLoading(false);
-    }, 1000);
-  }, []);
+      } catch (err) {
+        console.error('Error loading capsules or generating reflection:', err);
+        setError('Failed to load your reflections. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadCapsulesAndReflection();
+  }, [user, userKey]);
 
   const handleGenerateReflection = async () => {
+    if (capsules.length === 0) {
+      setError('You need to create some capsules before generating reflections.');
+      return;
+    }
+
     setIsGenerating(true);
+    setError(null);
     
-    // Simulate AI generation
-    setTimeout(() => {
-      console.log("Generating new AI reflection based on recent capsules...");
+    try {
+      const aiReflection = await aiService.generateReflection(capsules);
+      setReflection(aiReflection);
+    } catch (err) {
+      console.error('Error generating reflection:', err);
+      setError('Failed to generate reflection. Please try again.');
+    } finally {
       setIsGenerating(false);
-      // Would refresh reflections here
-    }, 3000);
+    }
   };
 
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case 'periodic': return 'bg-blue-100 text-blue-800';
-      case 'milestone': return 'bg-purple-100 text-purple-800';
-      case 'trend': return 'bg-green-100 text-green-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
+  // Determine sentiment trend based on capsule sentiments
+  const getSentimentTrend = (): 'improving' | 'stable' | 'declining' => {
+    if (capsules.length < 2) return 'stable';
+    
+    const recentCapsules = capsules.slice(0, Math.min(5, capsules.length));
+    const positiveCount = recentCapsules.filter(c => c.sentiment === 'positive').length;
+    const negativeCount = recentCapsules.filter(c => c.sentiment === 'negative').length;
+    
+    if (positiveCount > negativeCount * 1.5) return 'improving';
+    if (negativeCount > positiveCount * 1.5) return 'declining';
+    return 'stable';
   };
 
   const getTrendColor = (trend: string) => {
@@ -113,16 +102,33 @@ The love and encouragement you showed your future self in that letter reflects t
     }
   };
 
+  // Extract key themes from capsules
+  const getKeyThemes = (): string[] => {
+    const allThemes = capsules.flatMap(c => c.themes || []);
+    const themeCounts = allThemes.reduce((acc, theme) => {
+      acc[theme] = (acc[theme] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    return Object.entries(themeCounts)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([theme]) => theme);
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 p-4 flex items-center justify-center">
-        <div className="text-center">
-          <Sparkles className="h-8 w-8 animate-pulse text-blue-500 mx-auto mb-4" />
+        <div className="text-center space-y-4">
+          <Loader2 className="h-12 w-12 animate-spin text-blue-500 mx-auto" />
           <p className="text-gray-600">Loading your AI reflections...</p>
         </div>
       </div>
     );
   }
+
+  const sentimentTrend = getSentimentTrend();
+  const keyThemes = getKeyThemes();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 to-blue-50 p-4">
@@ -140,11 +146,20 @@ The love and encouragement you showed your future self in that letter reflects t
           
           <Button
             onClick={handleGenerateReflection}
-            disabled={isGenerating}
+            disabled={isGenerating || capsules.length === 0}
             className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
           >
-            <Brain className="h-4 w-4 mr-2" />
-            {isGenerating ? "Generating..." : "Generate New Reflection"}
+            {isGenerating ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <Brain className="h-4 w-4 mr-2" />
+                Regenerate Reflection
+              </>
+            )}
           </Button>
         </div>
 
@@ -159,102 +174,161 @@ The love and encouragement you showed your future self in that letter reflects t
           </p>
         </div>
 
-        {/* Reflections */}
-        <div className="space-y-6">
-          {reflections.map((reflection) => (
-            <Card key={reflection.id} className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
-              <CardHeader className="pb-4">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-2">
-                    <div className="flex items-center space-x-3">
-                      <CardTitle className="text-xl text-gray-800 flex items-center">
-                        <Brain className="h-6 w-6 mr-2 text-blue-500" />
-                        AI Reflection
-                      </CardTitle>
-                      <Badge className={getTypeColor(reflection.type)}>
-                        {reflection.type}
-                      </Badge>
-                    </div>
-                    <CardDescription className="flex items-center space-x-4 text-gray-600">
-                      <span className="flex items-center">
-                        <Calendar className="h-4 w-4 mr-1" />
-                        {format(reflection.createdAt, 'MMMM d, yyyy')}
-                      </span>
-                      <span className="flex items-center">
-                        Analyzing {format(reflection.analyzedPeriod.start, 'MMM d')} - {format(reflection.analyzedPeriod.end, 'MMM d, yyyy')}
-                      </span>
-                    </CardDescription>
-                  </div>
-                  
-                  <div className={`flex items-center space-x-1 ${getTrendColor(reflection.sentimentTrend)}`}>
-                    {getTrendIcon(reflection.sentimentTrend)}
-                    <span className="text-sm font-medium capitalize">
-                      {reflection.sentimentTrend}
-                    </span>
-                  </div>
-                </div>
-              </CardHeader>
-              
-              <CardContent className="space-y-6">
-                {/* Reflection Content */}
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-6 border border-blue-100">
-                  <div className="prose prose-gray max-w-none">
-                    <p className="text-gray-700 leading-relaxed whitespace-pre-line">
-                      {reflection.content}
-                    </p>
-                  </div>
-                </div>
+        {/* Error Alert */}
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-                {/* Key Themes */}
+        {/* AI Service Unavailable Warning */}
+        {!aiService.isAvailable() && (
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>AI Service Unavailable</AlertTitle>
+            <AlertDescription>
+              AI features require a Gemini API key to be configured. Reflections will use basic analysis.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Reflection Display */}
+        {reflection && capsules.length > 0 && (
+          <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
+            <CardHeader className="pb-4">
+              <div className="flex items-start justify-between">
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-3">
+                    <CardTitle className="text-xl text-gray-800 flex items-center">
+                      <Brain className="h-6 w-6 mr-2 text-blue-500" />
+                      AI Reflection
+                    </CardTitle>
+                    <Badge className="bg-blue-100 text-blue-800">
+                      Analyzing {capsules.length} capsule{capsules.length !== 1 ? 's' : ''}
+                    </Badge>
+                  </div>
+                  <CardDescription className="flex items-center space-x-4 text-gray-600">
+                    <span className="flex items-center">
+                      <Calendar className="h-4 w-4 mr-1" />
+                      Generated {format(new Date(), 'MMMM d, yyyy')}
+                    </span>
+                  </CardDescription>
+                </div>
+                
+                <div className={`flex items-center space-x-1 ${getTrendColor(sentimentTrend)}`}>
+                  {getTrendIcon(sentimentTrend)}
+                  <span className="text-sm font-medium capitalize">
+                    {sentimentTrend}
+                  </span>
+                </div>
+              </div>
+            </CardHeader>
+            
+            <CardContent className="space-y-6">
+              {/* Overall Sentiment */}
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-6 border border-blue-100">
+                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
+                  <TrendingUp className="h-4 w-4 mr-2 text-blue-500" />
+                  Overall Sentiment
+                </h4>
+                <p className="text-gray-700 leading-relaxed">
+                  {reflection.overallSentiment}
+                </p>
+              </div>
+
+              {/* Patterns */}
+              {reflection.patterns.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-gray-700 flex items-center">
+                    <Brain className="h-4 w-4 mr-2 text-purple-500" />
+                    Recurring Patterns
+                  </h4>
+                  <ul className="space-y-2">
+                    {reflection.patterns.map((pattern, index) => (
+                      <li key={index} className="flex items-start">
+                        <span className="text-purple-500 mr-2">•</span>
+                        <span className="text-gray-700">{pattern}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Insights */}
+              {reflection.insights.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-gray-700 flex items-center">
+                    <Sparkles className="h-4 w-4 mr-2 text-amber-500" />
+                    Key Insights
+                  </h4>
+                  <ul className="space-y-2">
+                    {reflection.insights.map((insight, index) => (
+                      <li key={index} className="flex items-start">
+                        <span className="text-amber-500 mr-2">•</span>
+                        <span className="text-gray-700">{insight}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Recommendations */}
+              {reflection.recommendations.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-gray-700 flex items-center">
+                    <Heart className="h-4 w-4 mr-2 text-pink-500" />
+                    Recommendations
+                  </h4>
+                  <ul className="space-y-2">
+                    {reflection.recommendations.map((recommendation, index) => (
+                      <li key={index} className="flex items-start">
+                        <span className="text-pink-500 mr-2">•</span>
+                        <span className="text-gray-700">{recommendation}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Key Themes */}
+              {keyThemes.length > 0 && (
                 <div className="space-y-3">
                   <h4 className="text-sm font-semibold text-gray-700 flex items-center">
                     <Heart className="h-4 w-4 mr-2 text-pink-500" />
                     Key Themes Discovered
                   </h4>
                   <div className="flex flex-wrap gap-2">
-                    {reflection.keyThemes.map((theme, index) => (
+                    {keyThemes.map((theme, index) => (
                       <Badge key={index} variant="secondary" className="bg-gray-100 text-gray-700">
                         {theme}
                       </Badge>
                     ))}
                   </div>
                 </div>
-
-                {/* Actions */}
-                <div className="flex space-x-3 pt-4 border-t border-gray-100">
-                  <Button variant="outline" size="sm">
-                    Share Insight
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    Save to Favorites
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    Export as PDF
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Empty State */}
-        {reflections.length === 0 && (
+        {capsules.length === 0 && (
           <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
             <CardContent className="p-12 text-center">
               <Sparkles className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-semibold text-gray-800 mb-2">
-                No reflections yet
+                No capsules yet
               </h3>
               <p className="text-gray-600 mb-6">
-                Create more time capsules to help your AI Memory Agent generate meaningful insights about your journey.
+                Create some time capsules to help your AI Memory Agent generate meaningful insights about your journey.
               </p>
               <Button
-                onClick={handleGenerateReflection}
-                disabled={isGenerating}
-                className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
+                onClick={onBack}
+                className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white"
               >
-                <Brain className="h-4 w-4 mr-2" />
-                {isGenerating ? "Analyzing..." : "Generate First Reflection"}
+                <Plus className="h-4 w-4 mr-2" />
+                Create Your First Capsule
               </Button>
             </CardContent>
           </Card>

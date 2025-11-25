@@ -25,5 +25,19 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-unused-vars": "off",
     },
+  },
+  // Suppress warnings for UI component library files
+  {
+    files: ["src/components/ui/**/*.{ts,tsx}"],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
+  // Allow 'any' type in test files for mocking purposes
+  {
+    files: ["**/*.test.{ts,tsx}", "**/test/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+    },
   }
 );

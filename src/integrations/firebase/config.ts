@@ -2,15 +2,19 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import { getEnvConfig } from '../../lib/env-validation';
+
+// Get validated environment configuration
+const envConfig = getEnvConfig();
 
 const firebaseConfig = {
-  apiKey: "AIzaSyArxUZCUVaRtsN7yx_tBuq4uSTRbSXsDks",
-  authDomain: "portfolio-182f6.firebaseapp.com",
-  projectId: "portfolio-182f6",
-  storageBucket: "portfolio-182f6.firebasestorage.app",
-  messagingSenderId: "9112378004",
-  appId: "1:9112378004:web:587cb4d4c0409b8e31f281",
-  measurementId: "G-RRGCD2QLLB"
+  apiKey: envConfig.firebase.apiKey,
+  authDomain: envConfig.firebase.authDomain,
+  projectId: envConfig.firebase.projectId,
+  storageBucket: envConfig.firebase.storageBucket,
+  messagingSenderId: envConfig.firebase.messagingSenderId,
+  appId: envConfig.firebase.appId,
+  measurementId: envConfig.firebase.measurementId,
 };
 
 // Initialize Firebase
