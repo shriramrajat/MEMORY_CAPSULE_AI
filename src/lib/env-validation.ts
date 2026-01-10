@@ -15,17 +15,9 @@ interface EnvConfig {
     appId: string;
     measurementId: string;
   };
-  ai: {
-    geminiApiKey: string;
-    timeoutMs: number;
-  };
   app: {
     name: string;
     env: string;
-  };
-  upload: {
-    maxFileSizeMB: number;
-    maxFilesPerCapsule: number;
   };
 }
 
@@ -46,12 +38,8 @@ const REQUIRED_ENV_VARS = [
  * Optional environment variables with defaults
  */
 const OPTIONAL_ENV_VARS = {
-  VITE_GEMINI_API_KEY: '',
-  VITE_APP_NAME: 'Memory Capsule AI',
+  VITE_APP_NAME: 'Memory Capsule',
   VITE_APP_ENV: 'development',
-  VITE_MAX_FILE_SIZE_MB: '50',
-  VITE_MAX_FILES_PER_CAPSULE: '10',
-  VITE_AI_TIMEOUT_MS: '30000',
 } as const;
 
 /**
@@ -116,17 +104,9 @@ export function getEnvConfig(): EnvConfig {
       appId: getEnvVar('VITE_FIREBASE_APP_ID'),
       measurementId: getEnvVar('VITE_FIREBASE_MEASUREMENT_ID'),
     },
-    ai: {
-      geminiApiKey: getEnvVar('VITE_GEMINI_API_KEY', OPTIONAL_ENV_VARS.VITE_GEMINI_API_KEY),
-      timeoutMs: parseInt(getEnvVar('VITE_AI_TIMEOUT_MS', OPTIONAL_ENV_VARS.VITE_AI_TIMEOUT_MS), 10),
-    },
     app: {
       name: getEnvVar('VITE_APP_NAME', OPTIONAL_ENV_VARS.VITE_APP_NAME),
       env: getEnvVar('VITE_APP_ENV', OPTIONAL_ENV_VARS.VITE_APP_ENV),
-    },
-    upload: {
-      maxFileSizeMB: parseInt(getEnvVar('VITE_MAX_FILE_SIZE_MB', OPTIONAL_ENV_VARS.VITE_MAX_FILE_SIZE_MB), 10),
-      maxFilesPerCapsule: parseInt(getEnvVar('VITE_MAX_FILES_PER_CAPSULE', OPTIONAL_ENV_VARS.VITE_MAX_FILES_PER_CAPSULE), 10),
     },
   };
 }
@@ -154,7 +134,5 @@ export function logEnvironmentInfo(): void {
     console.log(`  App Name: ${getEnvVar('VITE_APP_NAME', OPTIONAL_ENV_VARS.VITE_APP_NAME)}`);
     console.log(`  Environment: ${getEnvVar('VITE_APP_ENV', OPTIONAL_ENV_VARS.VITE_APP_ENV)}`);
     console.log(`  Firebase Project: ${getEnvVar('VITE_FIREBASE_PROJECT_ID')}`);
-    console.log(`  Max File Size: ${getEnvVar('VITE_MAX_FILE_SIZE_MB', OPTIONAL_ENV_VARS.VITE_MAX_FILE_SIZE_MB)}MB`);
-    console.log(`  AI Timeout: ${getEnvVar('VITE_AI_TIMEOUT_MS', OPTIONAL_ENV_VARS.VITE_AI_TIMEOUT_MS)}ms`);
   }
 }
